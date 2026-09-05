@@ -681,6 +681,21 @@
     ]
   },
   {
+    "id": "ui_page_open",
+    "type": "ui-control",
+    "z": "tab_ui",
+    "name": "Dashboard opened",
+    "ui": "ui_base",
+    "events": "all",
+    "x": 420,
+    "y": 60,
+    "wires": [
+      [
+        "lnk_page_open_out"
+      ]
+    ]
+  },
+  {
     "id": "lnk_ui_cmd_out",
     "type": "link out",
     "z": "tab_ui",
@@ -717,6 +732,19 @@
     ],
     "x": 700,
     "y": 260,
+    "wires": []
+  },
+  {
+    "id": "lnk_page_open_out",
+    "type": "link out",
+    "z": "tab_ui",
+    "name": "to poller (dashboard opened)",
+    "mode": "link",
+    "links": [
+      "lnk_page_open"
+    ],
+    "x": 700,
+    "y": 60,
     "wires": []
   },
   {
@@ -926,11 +954,27 @@
     ]
   },
   {
+    "id": "lnk_page_open",
+    "type": "link in",
+    "z": "tab_poll",
+    "name": "dashboard opened",
+    "links": [
+      "lnk_page_open_out"
+    ],
+    "x": 130,
+    "y": 340,
+    "wires": [
+      [
+        "page_open_guard"
+      ]
+    ]
+  },
+  {
     "id": "poll_guard",
     "type": "function",
     "z": "tab_poll",
     "name": "Poll guard",
-    "func": "\n// --- context helpers: use the file store when settings.js provides one, ---\n// --- otherwise fall back to memory without throwing.                    ---\nfunction put (k, v) { try { flow.set(k, v, 'file') } catch (e) { flow.set(k, v) } }\nfunction get (k, d) {\n  let v; try { v = flow.get(k, 'file') } catch (e) { v = undefined }\n  if (v === undefined) v = flow.get(k)\n  return v === undefined ? d : v\n}\n\n// Drops the tick when the circuit breaker is open, when we are inside a\n// backoff window, or when Bluetooth has been handed to the phone.\nconst now = Date.now()\nconst conn = get('conn', { fails: 0, backoffUntil: 0, breaker: 'closed',\n                           reconnects: 0, lastOk: 0, latency: [] })\nconst forced = msg.topic === 'force'\n\nif (!forced) {\n  const hold = Math.max(get('bleReleaseUntil', 0), global.get('bleReleaseUntil') || 0)\n  if (hold > now) {\n    node.status({ fill: 'grey', shape: 'ring',\n                  text: 'Bluetooth released ' + Math.ceil((hold - now) / 1000) + 's' })\n    return null\n  }\n  if (conn.backoffUntil > now) {\n    node.status({ fill: 'yellow', shape: 'ring',\n                  text: 'backoff ' + Math.ceil((conn.backoffUntil - now) / 1000) + 's' })\n    return null\n  }\n}\nnode.status({ fill: 'blue', shape: 'dot', text: 'reading' })\nflow.set('pollStartedAt', now)\n// A read-back after a write names the topics it touched; the scheduled\n// poll passes an empty payload, which reads the whole tree.\nif (!Array.isArray(msg.payload)) delete msg.payload   // use the node's topic list\nreturn msg\n",
+    "func": "\n// --- context helpers: use the file store when settings.js provides one, ---\n// --- otherwise fall back to memory without throwing.                    ---\nfunction put (k, v) { try { flow.set(k, v, 'file') } catch (e) { flow.set(k, v) } }\nfunction get (k, d) {\n  let v; try { v = flow.get(k, 'file') } catch (e) { v = undefined }\n  if (v === undefined) v = flow.get(k)\n  return v === undefined ? d : v\n}\n\n// Drops the tick when the circuit breaker is open, when we are inside a\n// backoff window, or when Bluetooth has been handed to the phone.\nconst now = Date.now()\nconst conn = get('conn', { fails: 0, backoffUntil: 0, breaker: 'closed',\n                           reconnects: 0, lastOk: 0, latency: [] })\nconst forced = msg.topic === 'force'\n\nif (!forced) {\n  const hold = Math.max(get('bleReleaseUntil', 0), global.get('bleReleaseUntil') || 0)\n  if (hold > now) {\n    node.status({ fill: 'grey', shape: 'ring',\n                  text: 'Bluetooth released ' + Math.ceil((hold - now) / 1000) + 's' })\n    return null\n  }\n  if (conn.backoffUntil > now) {\n    node.status({ fill: 'yellow', shape: 'ring',\n                  text: 'backoff ' + Math.ceil((conn.backoffUntil - now) / 1000) + 's' })\n    return null\n  }\n}\nnode.status({ fill: 'blue', shape: 'dot', text: 'reading' })\nflow.set('pollStartedAt', now)\nflow.set('pollBusy', true)        // cleared by Normalise / Read failed\n// A read-back after a write names the topics it touched; the scheduled\n// poll passes an empty payload, which reads the whole tree.\nif (!Array.isArray(msg.payload)) delete msg.payload   // use the node's topic list\nreturn msg\n",
     "outputs": 1,
     "timeout": 0,
     "noerr": 0,
@@ -942,6 +986,29 @@
     "wires": [
       [
         "truma_get"
+      ]
+    ]
+  },
+  {
+    "id": "page_open_guard",
+    "type": "function",
+    "z": "tab_poll",
+    "name": "Read when the dashboard opens",
+    "func": "\n// --- context helpers: use the file store when settings.js provides one, ---\n// --- otherwise fall back to memory without throwing.                    ---\nfunction put (k, v) { try { flow.set(k, v, 'file') } catch (e) { flow.set(k, v) } }\nfunction get (k, d) {\n  let v; try { v = flow.get(k, 'file') } catch (e) { v = undefined }\n  if (v === undefined) v = flow.get(k)\n  return v === undefined ? d : v\n}\n\n// The dashboard's ui-control node reports 'connect' when a browser opens\n// the dashboard and 'change' for every page it shows (the first one too).\n// Whoever opens the dashboard should not sit on data that is up to two\n// minutes old, so ask the poller for a read straight away: the same\n// { topic: 'force' } the \"Read the heater now\" button sends.\nconst ev = msg.payload\nif (ev !== 'connect' && ev !== 'change') return null      // 'lost' etc.\nconst page = msg.name ? ' (' + msg.name + ')' : ''\nconst now = Date.now()\nconst conn = get('conn', {})\n\n// Damping: at most one read per 30 s, whatever the browsers do. A page\n// reload, or two phones opening at the same time, must not turn into a\n// burst of Bluetooth reads. A read that finished less than 30 s ago\n// counts as well: that data is fresh enough.\nconst DAMP = 30000\nconst last = Math.max(flow.get('pageOpenPollAt') || 0, conn.lastOk || 0)\nif (now - last < DAMP) {\n  node.status({ fill: 'grey', shape: 'ring', text: 'read ' + Math.round((now - last) / 1000) + 's ago, skipped' })\n  return null\n}\n\n// Nothing to do while a read is already running (60 s cap in case a read\n// never reports back at all).\nconst started = flow.get('pollStartedAt') || 0\nif (flow.get('pollBusy') && now - started < 60000) {\n  node.status({ fill: 'grey', shape: 'ring', text: 'read in progress, skipped' })\n  return null\n}\n\n// Nothing to do while Bluetooth is handed to the phone. Poll guard lets a\n// forced read through that hold on purpose (the Diagnostics button), so\n// the hold has to be respected here.\nconst hold = Math.max(get('bleReleaseUntil', 0), global.get('bleReleaseUntil') || 0)\nif (hold > now) {\n  node.status({ fill: 'grey', shape: 'ring', text: 'Bluetooth released, skipped' })\n  return null\n}\n\nflow.set('pageOpenPollAt', now)\nnode.status({ fill: 'blue', shape: 'dot', text: 'dashboard opened, reading' })\nreturn [{ topic: 'force' },\n        { payload: { lv: 'info', m: 'Dashboard opened' + page + ': reading the heater now' } }]\n",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 350,
+    "y": 340,
+    "wires": [
+      [
+        "poll_guard"
+      ],
+      [
+        "lnk_log_out"
       ]
     ]
   },
@@ -982,7 +1049,7 @@
     "type": "function",
     "z": "tab_poll",
     "name": "Normalise",
-    "func": "\n// --- context helpers: use the file store when settings.js provides one, ---\n// --- otherwise fall back to memory without throwing.                    ---\nfunction put (k, v) { try { flow.set(k, v, 'file') } catch (e) { flow.set(k, v) } }\nfunction get (k, d) {\n  let v; try { v = flow.get(k, 'file') } catch (e) { v = undefined }\n  if (v === undefined) v = flow.get(k)\n  return v === undefined ? d : v\n}\n\n// The get node returns either {topics:{T:{parameters:{P:{value}}}}} or a\n// flattened {T:{P:value}}. Accept both rather than assume one shape.\nconst raw = msg.payload\nfunction val (topic, param) {\n  if (!raw || typeof raw !== 'object') return null\n  const t = (raw.topics && raw.topics[topic]) || raw[topic]\n  if (!t) return null\n  const p = (t.parameters && t.parameters[param]) !== undefined\n    ? t.parameters[param] : t[param]\n  if (p === undefined || p === null) return null\n  const v = (typeof p === 'object') ? p.value : p\n  return (v === undefined || v === null) ? null : Number(v)\n}\nfunction topicOf (name) {\n  return (raw && ((raw.topics && raw.topics[name]) || raw[name])) || null\n}\nfunction switches () {\n  const t = topicOf('Switches'); const out = {}\n  if (!t) return out\n  const src = t.parameters || t\n  for (const k of Object.keys(src)) {\n    const p = src[k]\n    const v = (typeof p === 'object') ? p.value : p\n    if (v === 0 || v === 1) out[k] = Number(v)\n  }\n  return out\n}\n\nconst prev = get('state', {})\nconst now = Date.now()\n\n// Energy source: only trust it once the topic has actually been located.\n// Energy is two parameters; the UI shows one of five combinations.\nconst eD = val('EnergySrc', 'DieselLevel')\nconst eE = val('EnergySrc', 'ElectricLevel')\nfunction energyMode (d, e) {\n  if (d == null || e == null) return null\n  if (d === 1 && e === 0) return 5\n  if (d === 0 && e === 1) return 3\n  if (d === 0 && e === 2) return 4\n  if (d === 1 && e === 1) return 1\n  if (d === 1 && e === 2) return 2\n  return null\n}\nconst energyVal = energyMode(eD, eE)\n\nconst st = {\n  ts: now,\n  online: true,\n  lastOk: now,\n  room: {\n    mode:    val('RoomClimate', 'Mode'),\n    tgt:     val('AirHeating', 'TgtTemp'),\n    temp:    val('RoomClimate', 'Temp') !== null\n               ? val('RoomClimate', 'Temp') : val('AirHeating', 'Temp'),\n    airMode: val('AirHeating', 'Mode'),\n    active: val('RoomClimate', 'Active'),\n    fanLevel: val('AirCirculation', 'FanLevel')\n  },\n  water: {\n    mode: val('WaterHeating', 'Mode'),\n    temp: val('WaterHeating', 'Temp'),\n    active: val('WaterHeating', 'Active'),\n    boost: val('WaterHeating', 'FasterHeatingMode')\n  },\n  energy: {\n    mode: energyVal, diesel: eD, electric: eE,\n    label: energyVal === null ? 'Not available'\n      : ({ 1: 'Diesel + electric 900 W', 2: 'Diesel + electric 1800 W',\n           3: 'Electric 900 W', 4: 'Electric 1800 W', 5: 'Diesel'\n         }[energyVal] || String(energyVal))\n  },\n  switches: switches(),\n  // A control is offered when the heater actually reports that parameter.\n  caps: {\n    energy:   eD !== null && eE !== null,\n    fanLevel: val('AirCirculation', 'FanLevel') !== null,\n    boost:    val('WaterHeating', 'FasterHeatingMode') !== null,\n    waterOff: val('WaterHeating', 'Active') !== null\n  },\n  site: prev.site || { soc: null, acIn: null },\n  guard: prev.guard || { reason: '' },\n  errors: [],\n  pending: prev.pending || {}\n}\n\n// ---- resolve optimistic UI ------------------------------------------------\n// A pending entry is cleared when the device confirms it, or rolled back\n// after the window expires so a stuck button never lies to the user.\nconst WINDOW = 45000\nconst toasts = []\nfor (const key of Object.keys(st.pending)) {\n  const p = st.pending[key]\n  const cur = key === 'room.mode'    ? st.room.mode\n            : key === 'room.tgt'     ? st.room.tgt\n            : key === 'room.airMode' ? st.room.airMode\n            : key === 'water.mode'   ? (st.water.active === 0 ? -1 : st.water.mode)\n            : key === 'vent.level'   ? st.room.fanLevel\n            : key === 'water.boost'  ? st.water.boost\n            : key === 'energy.mode'  ? st.energy.mode\n            : key.startsWith('switch.') ? st.switches[key.slice(7)]\n            : undefined\n  if (cur === p.value) { delete st.pending[key]; continue }\n  if (now - p.ts > WINDOW) {\n    delete st.pending[key]\n    toasts.push({ payload: 'The heater did not accept that change. Showing its actual setting.',\n                  color: '#FF9E00' })\n  }\n}\n\nconst conn = get('conn', {})\nconn.fails = 0\nconn.backoffUntil = 0\nconn.breaker = 'closed'\nconn.lastOk = now\nconst started = flow.get('pollStartedAt') || now\nconn.latency = (conn.latency || []).concat(now - started).slice(-30)\nput('conn', conn)\nput('state', st)\n\nnode.status({ fill: 'green', shape: 'dot',\n              text: (st.room.temp == null ? '--' : (st.room.temp / 10).toFixed(1)) + 'C' })\n\nconst out = [{ payload: st }, { payload: raw }, null,\n             { payload: { lv: 'info', m: 'Read ok in ' + (now - started) + ' ms' } }]\nif (toasts.length) out[2] = toasts[0]\nreturn out\n",
+    "func": "\n// --- context helpers: use the file store when settings.js provides one, ---\n// --- otherwise fall back to memory without throwing.                    ---\nfunction put (k, v) { try { flow.set(k, v, 'file') } catch (e) { flow.set(k, v) } }\nfunction get (k, d) {\n  let v; try { v = flow.get(k, 'file') } catch (e) { v = undefined }\n  if (v === undefined) v = flow.get(k)\n  return v === undefined ? d : v\n}\n\n// The get node returns either {topics:{T:{parameters:{P:{value}}}}} or a\n// flattened {T:{P:value}}. Accept both rather than assume one shape.\nconst raw = msg.payload\nfunction val (topic, param) {\n  if (!raw || typeof raw !== 'object') return null\n  const t = (raw.topics && raw.topics[topic]) || raw[topic]\n  if (!t) return null\n  const p = (t.parameters && t.parameters[param]) !== undefined\n    ? t.parameters[param] : t[param]\n  if (p === undefined || p === null) return null\n  const v = (typeof p === 'object') ? p.value : p\n  return (v === undefined || v === null) ? null : Number(v)\n}\nfunction topicOf (name) {\n  return (raw && ((raw.topics && raw.topics[name]) || raw[name])) || null\n}\nfunction switches () {\n  const t = topicOf('Switches'); const out = {}\n  if (!t) return out\n  const src = t.parameters || t\n  for (const k of Object.keys(src)) {\n    const p = src[k]\n    const v = (typeof p === 'object') ? p.value : p\n    if (v === 0 || v === 1) out[k] = Number(v)\n  }\n  return out\n}\n\nconst prev = get('state', {})\nconst now = Date.now()\n\n// Energy source: only trust it once the topic has actually been located.\n// Energy is two parameters; the UI shows one of five combinations.\nconst eD = val('EnergySrc', 'DieselLevel')\nconst eE = val('EnergySrc', 'ElectricLevel')\nfunction energyMode (d, e) {\n  if (d == null || e == null) return null\n  if (d === 1 && e === 0) return 5\n  if (d === 0 && e === 1) return 3\n  if (d === 0 && e === 2) return 4\n  if (d === 1 && e === 1) return 1\n  if (d === 1 && e === 2) return 2\n  return null\n}\nconst energyVal = energyMode(eD, eE)\n\nconst st = {\n  ts: now,\n  online: true,\n  lastOk: now,\n  room: {\n    mode:    val('RoomClimate', 'Mode'),\n    tgt:     val('AirHeating', 'TgtTemp'),\n    temp:    val('RoomClimate', 'Temp') !== null\n               ? val('RoomClimate', 'Temp') : val('AirHeating', 'Temp'),\n    airMode: val('AirHeating', 'Mode'),\n    active: val('RoomClimate', 'Active'),\n    fanLevel: val('AirCirculation', 'FanLevel')\n  },\n  water: {\n    mode: val('WaterHeating', 'Mode'),\n    temp: val('WaterHeating', 'Temp'),\n    active: val('WaterHeating', 'Active'),\n    boost: val('WaterHeating', 'FasterHeatingMode')\n  },\n  energy: {\n    mode: energyVal, diesel: eD, electric: eE,\n    label: energyVal === null ? 'Not available'\n      : ({ 1: 'Diesel + electric 900 W', 2: 'Diesel + electric 1800 W',\n           3: 'Electric 900 W', 4: 'Electric 1800 W', 5: 'Diesel'\n         }[energyVal] || String(energyVal))\n  },\n  switches: switches(),\n  // A control is offered when the heater actually reports that parameter.\n  caps: {\n    energy:   eD !== null && eE !== null,\n    fanLevel: val('AirCirculation', 'FanLevel') !== null,\n    boost:    val('WaterHeating', 'FasterHeatingMode') !== null,\n    waterOff: val('WaterHeating', 'Active') !== null\n  },\n  site: prev.site || { soc: null, acIn: null },\n  guard: prev.guard || { reason: '' },\n  errors: [],\n  pending: prev.pending || {}\n}\n\n// ---- resolve optimistic UI ------------------------------------------------\n// A pending entry is cleared when the device confirms it, or rolled back\n// after the window expires so a stuck button never lies to the user.\nconst WINDOW = 45000\nconst toasts = []\nfor (const key of Object.keys(st.pending)) {\n  const p = st.pending[key]\n  const cur = key === 'room.mode'    ? st.room.mode\n            : key === 'room.tgt'     ? st.room.tgt\n            : key === 'room.airMode' ? st.room.airMode\n            : key === 'water.mode'   ? (st.water.active === 0 ? -1 : st.water.mode)\n            : key === 'vent.level'   ? st.room.fanLevel\n            : key === 'water.boost'  ? st.water.boost\n            : key === 'energy.mode'  ? st.energy.mode\n            : key.startsWith('switch.') ? st.switches[key.slice(7)]\n            : undefined\n  if (cur === p.value) { delete st.pending[key]; continue }\n  if (now - p.ts > WINDOW) {\n    delete st.pending[key]\n    toasts.push({ payload: 'The heater did not accept that change. Showing its actual setting.',\n                  color: '#FF9E00' })\n  }\n}\n\nflow.set('pollBusy', false)\nconst conn = get('conn', {})\nconn.fails = 0\nconn.backoffUntil = 0\nconn.breaker = 'closed'\nconn.lastOk = now\nconst started = flow.get('pollStartedAt') || now\nconn.latency = (conn.latency || []).concat(now - started).slice(-30)\nput('conn', conn)\nput('state', st)\n\nnode.status({ fill: 'green', shape: 'dot',\n              text: (st.room.temp == null ? '--' : (st.room.temp / 10).toFixed(1)) + 'C' })\n\nconst out = [{ payload: st }, { payload: raw }, null,\n             { payload: { lv: 'info', m: 'Read ok in ' + (now - started) + ' ms' } }]\nif (toasts.length) out[2] = toasts[0]\nreturn out\n",
     "outputs": 4,
     "timeout": 0,
     "noerr": 0,
@@ -1013,7 +1080,7 @@
     "type": "function",
     "z": "tab_poll",
     "name": "Read failed",
-    "func": "\n// --- context helpers: use the file store when settings.js provides one, ---\n// --- otherwise fall back to memory without throwing.                    ---\nfunction put (k, v) { try { flow.set(k, v, 'file') } catch (e) { flow.set(k, v) } }\nfunction get (k, d) {\n  let v; try { v = flow.get(k, 'file') } catch (e) { v = undefined }\n  if (v === undefined) v = flow.get(k)\n  return v === undefined ? d : v\n}\n\n// Exponential backoff with a circuit breaker. Five consecutive failures\n// opens the breaker and slows polling right down until one read succeeds.\nconst now = Date.now()\nconst conn = get('conn', { fails: 0, reconnects: 0, latency: [] })\nconn.fails = (conn.fails || 0) + 1\nconn.reconnects = (conn.reconnects || 0) + 1\nconst step = Math.min(conn.fails, 6)\nconst wait = Math.min(30000 * Math.pow(2, step - 1), 900000)  // 30s .. 15min\nconn.backoffUntil = now + wait\nconn.breaker = conn.fails >= 5 ? 'open' : 'closed'\nput('conn', conn)\n\nconst st = get('state', {})\nst.online = false\nst.ts = now\nput('state', st)\n\nnode.status({ fill: 'red', shape: 'ring', text: 'fail ' + conn.fails })\n\nconst out = [{ payload: st }, { payload: {\n  lv: conn.fails >= 5 ? 'error' : 'warn',\n  m: 'Read failed (' + conn.fails + '): ' + (msg.error && msg.error.message || 'unknown')\n     + ' — retrying in ' + Math.round(wait / 1000) + 's'\n} }, null]\nif (conn.fails === 5) {\n  out[2] = { payload: 'Lost contact with the heater. Check the panel and Bluetooth.',\n             color: '#F44336' }\n}\nreturn out\n",
+    "func": "\n// --- context helpers: use the file store when settings.js provides one, ---\n// --- otherwise fall back to memory without throwing.                    ---\nfunction put (k, v) { try { flow.set(k, v, 'file') } catch (e) { flow.set(k, v) } }\nfunction get (k, d) {\n  let v; try { v = flow.get(k, 'file') } catch (e) { v = undefined }\n  if (v === undefined) v = flow.get(k)\n  return v === undefined ? d : v\n}\n\n// Exponential backoff with a circuit breaker. Five consecutive failures\n// opens the breaker and slows polling right down until one read succeeds.\nconst now = Date.now()\nflow.set('pollBusy', false)\nconst conn = get('conn', { fails: 0, reconnects: 0, latency: [] })\nconn.fails = (conn.fails || 0) + 1\nconn.reconnects = (conn.reconnects || 0) + 1\nconst step = Math.min(conn.fails, 6)\nconst wait = Math.min(30000 * Math.pow(2, step - 1), 900000)  // 30s .. 15min\nconn.backoffUntil = now + wait\nconn.breaker = conn.fails >= 5 ? 'open' : 'closed'\nput('conn', conn)\n\nconst st = get('state', {})\nst.online = false\nst.ts = now\nput('state', st)\n\nnode.status({ fill: 'red', shape: 'ring', text: 'fail ' + conn.fails })\n\nconst out = [{ payload: st }, { payload: {\n  lv: conn.fails >= 5 ? 'error' : 'warn',\n  m: 'Read failed (' + conn.fails + '): ' + (msg.error && msg.error.message || 'unknown')\n     + ' — retrying in ' + Math.round(wait / 1000) + 's'\n} }, null]\nif (conn.fails === 5) {\n  out[2] = { payload: 'Lost contact with the heater. Check the panel and Bluetooth.',\n             color: '#F44336' }\n}\nreturn out\n",
     "outputs": 3,
     "timeout": 0,
     "noerr": 0,
