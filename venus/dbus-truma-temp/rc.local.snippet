@@ -1,0 +1,6 @@
+# /data/rc.local runs at every boot on Venus OS and survives firmware updates.
+# Re-link the Truma temperature service into /service (runit picks it up
+# within seconds). Append this block to /data/rc.local (create it, chmod +x).
+if [ ! -e /service/dbus-truma-temp ]; then
+  ln -s /data/truma/dbus-truma-temp/service /service/dbus-truma-temp
+fi
